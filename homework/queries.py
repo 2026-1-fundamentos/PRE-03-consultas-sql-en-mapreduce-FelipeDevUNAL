@@ -1,138 +1,149 @@
-"""Ejercicio evaluativo"""
+"""Taller evaluable"""
 
 # pylint: disable=broad-exception-raised
 # pylint: disable=import-error
 
 
-def ejecutar():
-    """
-    Punto de entrada principal.
+#
+# ORQUESTADOR:
+#
+def run():
+    """Orquestador.
 
-    Procesa el archivo `files/input/tips.csv` y genera 5 salidas en:
+    Lee `files/input/tips.csv` y genera los resultados de 5 consultas en:
 
-    - files/query_1/
-    - files/query_2/
-    - files/query_3/
-    - files/query_4/
-    - files/query_5/
+    - `files/query_1/`
+    - `files/query_2/`
+    - `files/query_3/`
+    - `files/query_4/`
+    - `files/query_5/`
 
-    Cada carpeta contiene:
-    - _SUCCESS
-    - part-00000
+    Cada directorio contiene `_SUCCESS` y `part-00000`.
     """
 
     import csv
     import os
     from collections import defaultdict
-    from typing import Iterable, Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
-    ruta_entrada = os.path.join("files", "input", "tips.csv")
+    input_path = os.path.join("files", "input", "tips.csv")
 
-    if not os.path.isfile(ruta_entrada):
-        raise Exception(f"No existe el archivo de entrada: {ruta_entrada}")
+    if not os.path.exists(input_path):
+        raise Exception(f"Input file not found: {input_path}")
 
-    with open(ruta_entrada, encoding="utf-8") as f:
-        lector = csv.DictReader(f)
-        registros = list(lector)
+    with open(input_path, "r", encoding="utf-8", newline="") as file:
+        reader = csv.DictReader(file)
+        rows = list(reader)
 
-    # Conversión de tipos
-    for fila in registros:
-        fila["total_bill"] = float(fila["total_bill"])
-        fila["tip"] = float(fila["tip"])
-        fila["size"] = int(float(fila["size"]))
+    # Normalización básica de tipos numéricos.
+    for row in rows:
+        row["total_bill"] = float(row["total_bill"])
+        row["tip"] = float(row["tip"])
+        row["size"] = int(float(row["size"]))
 
-    def motor_analitico(
-        dataset: Iterable[dict],
-        transformador: Callable[[dict], Iterator[tuple]],
-        agregador: Callable[[object, list], tuple | None],
-    ) -> list[tuple]:
-        """Simulación de MapReduce en memoria."""
+    def map_reduce(
+        data: Iterable[dict],
+        mapper: Callable[[dict], Iterator[tuple[object, object]]],
+        reducer: Callable[[object, list[object]], tuple[object, object] | None],
+    ) -> list[tuple[object, object]]:
+        """Ejecuta un pipeline MapReduce en memoria.
 
-        acumulador = defaultdict(list)
+        - Map: emite pares (key, value)
+        - Shuffle: agrupa values por key
+        - Reduce: calcula un resultado por key
+        """
 
-        for elemento in dataset:
-            for clave, valor in transformador(elemento):
-                acumulador[clave].append(valor)
+        grouped: dict[object, list[object]] = defaultdict(list)
+        for item in data:
+            for key, value in mapper(item):
+                grouped[key].append(value)
 
-        salida = []
-        for clave in sorted(acumulador, key=lambda x: str(x)):
-            resultado = agregador(clave, acumulador[clave])
-            if resultado:
-                salida.append(resultado)
+        results: list[tuple[object, object]] = []
+        for key in sorted(grouped, key=lambda k: str(k)):
+            reduced = reducer(key, grouped[key])
+            if reduced is not None:
+                results.append(reduced)
+        return results
 
-        return salida
+    def write_output(query_number: int, lines: list[str]) -> None:
+        directory = os.path.join("files", f"query_{query_number}")
+        os.makedirs(directory, exist_ok=True)
+        success_path = os.path.join(directory, "_SUCCESS")
+        part_path = os.path.join(directory, "part-00000")
 
-    def guardar_salida(indice: int, contenido: list[str]) -> None:
-        carpeta = os.path.join("files", f"query_{indice}")
-        os.makedirs(carpeta, exist_ok=True)
-
-        with open(os.path.join(carpeta, "_SUCCESS"), "w"):
+        with open(success_path, "w", encoding="utf-8", newline=""):
             pass
+        with open(part_path, "w", encoding="utf-8", newline="") as out:
+            out.write("\n".join(lines))
+            if lines:
+                out.write("\n")
 
-        with open(os.path.join(carpeta, "part-00000"), "w") as archivo:
-            archivo.write("\n".join(contenido))
-            if contenido:
-                archivo.write("\n")
+    # Query 1: Conteo de registros por día.
+    def q1_mapper(row: dict) -> Iterator[tuple[str, int]]:
+        yield (row["day"], 1)
 
-    # --- Consulta 1 ---
-    def t1(fila):
-        yield fila["day"], 1
+    def q1_reducer(day: str, values: list[object]) -> tuple[str, int]:
+        return (day, int(sum(values)))
 
-    def a1(clave, valores):
-        return clave, sum(valores)
+    q1 = map_reduce(rows, q1_mapper, q1_reducer)
+    q1_lines = [f"{day}\t{count}" for day, count in q1]
+    write_output(1, q1_lines)
 
-    res1 = motor_analitico(registros, t1, a1)
-    lineas1 = [f"{d}\t{c}" for d, c in res1]
-    guardar_salida(1, lineas1)
+    # Query 2: Promedio de propina por sexo.
+    def q2_mapper(row: dict) -> Iterator[tuple[str, tuple[float, int]]]:
+        yield (row["sex"], (row["tip"], 1))
 
-    # --- Consulta 2 ---
-    def t2(fila):
-        yield fila["sex"], (fila["tip"], 1)
+    def q2_reducer(sex: str, values: list[object]) -> tuple[str, float]:
+        tip_sum = 0.0
+        count = 0
+        for tip, one in values:  # type: ignore[misc]
+            tip_sum += float(tip)
+            count += int(one)
+        return (sex, tip_sum / count)
 
-    def a2(clave, valores):
-        total = sum(v[0] for v in valores)
-        cantidad = sum(v[1] for v in valores)
-        return clave, total / cantidad
+    q2 = map_reduce(rows, q2_mapper, q2_reducer)
+    q2_lines = [f"{sex}\t{avg_tip:.6f}" for sex, avg_tip in q2]
+    write_output(2, q2_lines)
 
-    res2 = motor_analitico(registros, t2, a2)
-    lineas2 = [f"{k}\t{v:.6f}" for k, v in res2]
-    guardar_salida(2, lineas2)
+    # Query 3: Suma de propina por fumador.
+    def q3_mapper(row: dict) -> Iterator[tuple[str, float]]:
+        yield (row["smoker"], row["tip"])
 
-    # --- Consulta 3 ---
-    def t3(fila):
-        yield fila["smoker"], fila["tip"]
+    def q3_reducer(smoker: str, values: list[object]) -> tuple[str, float]:
+        return (smoker, float(sum(values)))
 
-    def a3(clave, valores):
-        return clave, sum(valores)
+    q3 = map_reduce(rows, q3_mapper, q3_reducer)
+    q3_lines = [f"{smoker}\t{tip_sum:.6f}" for smoker, tip_sum in q3]
+    write_output(3, q3_lines)
 
-    res3 = motor_analitico(registros, t3, a3)
-    lineas3 = [f"{k}\t{v:.6f}" for k, v in res3]
-    guardar_salida(3, lineas3)
+    # Query 4: Promedio de total_bill por (día, tiempo).
+    def q4_mapper(row: dict) -> Iterator[tuple[tuple[str, str], tuple[float, int]]]:
+        yield ((row["day"], row["time"]), (row["total_bill"], 1))
 
-    # --- Consulta 4 ---
-    def t4(fila):
-        yield (fila["day"], fila["time"]), (fila["total_bill"], 1)
+    def q4_reducer(key: tuple[str, str], values: list[object]) -> tuple[tuple[str, str], float]:
+        bill_sum = 0.0
+        count = 0
+        for bill, one in values:  # type: ignore[misc]
+            bill_sum += float(bill)
+            count += int(one)
+        return (key, bill_sum / count)
 
-    def a4(clave, valores):
-        total = sum(v[0] for v in valores)
-        cantidad = sum(v[1] for v in valores)
-        return clave, total / cantidad
+    q4 = map_reduce(rows, q4_mapper, q4_reducer)
+    q4_lines = [f"{day}\t{time}\t{avg_bill:.6f}" for (day, time), avg_bill in q4]
+    write_output(4, q4_lines)
 
-    res4 = motor_analitico(registros, t4, a4)
-    lineas4 = [f"{d}\t{t}\t{v:.6f}" for (d, t), v in res4]
-    guardar_salida(4, lineas4)
+    # Query 5: Máxima propina por tamaño de mesa.
+    def q5_mapper(row: dict) -> Iterator[tuple[int, float]]:
+        yield (row["size"], row["tip"])
 
-    # --- Consulta 5 ---
-    def t5(fila):
-        yield fila["size"], fila["tip"]
+    def q5_reducer(size: int, values: list[object]) -> tuple[int, float]:
+        return (size, float(max(values)))
 
-    def a5(clave, valores):
-        return clave, max(valores)
-
-    res5 = motor_analitico(registros, t5, a5)
-    lineas5 = [f"{k}\t{v:.6f}" for k, v in res5]
-    guardar_salida(5, lineas5)
+    q5 = map_reduce(rows, q5_mapper, q5_reducer)
+    q5_lines = [f"{size}\t{max_tip:.6f}" for size, max_tip in q5]
+    write_output(5, q5_lines)
 
 
 if __name__ == "__main__":
-    ejecutar()
+
+    run()
